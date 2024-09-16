@@ -57,6 +57,7 @@
       endPoint: { x: 36.668, y: 84.983, heading: "tangential", reverse: false },
       controlPoints: [],
       color: getRandomColor(),
+      name: "Line 1",
     },
   ];
 

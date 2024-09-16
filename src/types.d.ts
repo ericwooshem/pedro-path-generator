@@ -34,4 +34,5 @@ interface Line {
   endPoint: Point;
   controlPoints: ControlPoint[];
   color: string;
+  name: string;
 }

@@ -1,7 +1,7 @@
 <script lang="ts">
   import _ from "lodash";
   import { getRandomColor } from "../utils";
-
+ 
   export let percent: number;
   export let playing: boolean;
   export let play: () => any;
@@ -14,6 +14,117 @@
   export let robotHeading: number;
   export let x: d3.ScaleLinear<number, number, number>;
   export let y: d3.ScaleLinear<number, number, number>;
+
+  let importCode: string;
+
+  function getCode(line: Line) {
+    let code = "";
+    let points = "";
+    line.controlPoints.forEach(controlPoint => {
+      points += `new Point(${controlPoint.x}, ${controlPoint.y}), `;
+    });
+    points += `new Point(${line.endPoint.x}, ${line.endPoint.y}), `;
+
+    points = points.slice(0, -2);
+    code = ".addPath("+line.name+", ";
+    
+    if (line.endPoint.heading == "linear") {
+      code += line.endPoint.heading.toUpperCase()+"("+line.endPoint.startDeg+", "+line.endPoint.endDeg+"), ";
+    } else if (line.endPoint.heading == "tangential"){
+      if (line.endPoint.reverse == true) {
+        code += line.endPoint.heading.toUpperCase() + "("+line.endPoint.reverse+"), ";
+      } else {
+        code += line.endPoint.heading.toUpperCase() + "(), ";
+      }
+    } else if (line.endPoint.heading == "constant"){
+      code += line.endPoint.heading.toUpperCase() + "("+line.endPoint.degrees+"), ";
+    }
+    
+    code += points + ")";
+    return code;
+  }
+  
+  
+  function parseImportCode() {
+    // ChatGPT wrote this function :D
+    // Regex pattern to match addPath calls
+    const pathPattern = /\.addPath\(\s*(\w+),\s*(\w+)\(([^)]*)\)\s*(?:,\s*new\s+Point\(([\d\.\-]+),\s*([\d\.\-]+)\))?(?:,\s*new\s+Point\(([\d\.\-]+),\s*([\d\.\-]+)\))?(?:,\s*new\s+Point\(([\d\.\-]+),\s*([\d\.\-]+)\))?\s*\)/g;
+
+    let match: RegExpExecArray | null;
+    let prevDeg = 0;
+    let pathIndex = 0;
+    // Extract and iterate over each path
+    while ((match = pathPattern.exec(importCode)) !== null) {
+      const pathName = match[1];
+      const headingPart = match[2];
+      const headingParams = match[3];
+      const point1X = match[4];
+      const point1Y = match[5];
+      const point2X = match[6];
+      const point2Y = match[7];
+      const point3X = match[8];
+      const point3Y = match[9];
+
+      // Parse heading parameters
+      const headingParamsArr = headingParams.split(',').map(param => param.trim());
+      let headingType: "linear" | "constant" | "tangential" = 'constant';
+      let startDeg: number | undefined;
+      let endDeg: number | undefined;
+      let reverse: boolean | undefined;
+
+      if (headingPart.startsWith('LINEAR')) {
+          headingType = 'linear';
+          startDeg = headingParamsArr[0] ? parseFloat(headingParamsArr[0]) : undefined;
+          endDeg = headingParamsArr[1] ? parseFloat(headingParamsArr[1]) : undefined;
+      } else if (headingPart.startsWith('CONSTANT')) {
+          headingType = 'constant';
+          startDeg = headingParamsArr[0] ? parseFloat(headingParamsArr[0]) : undefined;
+      } else if (headingPart.startsWith('TANGENTIAL')) {
+          headingType = 'tangential';
+          reverse = headingParamsArr.length > 0 ? headingParamsArr[0] === 'true' : false;
+      }
+
+      // Parse points
+      const controlPoint1 = point1X && point1Y ? { x: parseFloat(point1X), y: parseFloat(point1Y) } : undefined;
+      const controlPoint2 = point2X && point2Y ? { x: parseFloat(point2X), y: parseFloat(point2Y) } : undefined;
+      const endPoint = point3X && point3Y ? { x: parseFloat(point3X), y: parseFloat(point3Y) } :
+          controlPoint2 || (controlPoint1 ? { x: controlPoint1.x, y: controlPoint1.y } : { x: 0, y: 0 });
+
+      // Ensure lines array has enough elements
+      if (pathIndex >= lines.length) {
+          lines.push({
+              name: '',
+              color: getRandomColor(), // Assuming this is a function or value to assign color
+              endPoint: { x: 0, y: 0, heading: 'constant', degrees: 0 }, // Default value
+              controlPoints: []
+          });
+      }
+
+      // Update the line object
+      lines[pathIndex].name = pathName;
+      lines[pathIndex].color = getRandomColor(); // Update color if needed
+      lines[pathIndex].endPoint = {
+          x: endPoint.x,
+          y: endPoint.y,
+          heading: headingType,
+          startDeg: headingType === 'linear' ? startDeg : undefined,
+          endDeg: headingType === 'linear' ? endDeg : undefined,
+          degrees: headingType === 'constant' ? (startDeg || prevDeg) : undefined,
+          reverse: headingType === 'tangential' ? reverse : undefined
+      } as Point;
+
+      if (controlPoint1) {
+          lines[pathIndex].controlPoints[0] = controlPoint1;
+      }
+      if (controlPoint2) {
+          lines[pathIndex].controlPoints[1] = controlPoint2;
+      }
+
+      // Update prevDeg for the next iteration
+      prevDeg = (lines[pathIndex].endPoint.endDeg ?? lines[pathIndex].endPoint.degrees ?? prevDeg) as number;
+      pathIndex += 1;
+    }
+  }
 </script>
 
 <div class="flex-1 flex flex-col justify-start items-center gap-2 h-full">
@@ -85,8 +196,14 @@
         <div class="flex flex-row w-full justify-between">
           <div
             class="font-semibold flex flex-row justify-start items-center gap-2"
-          >
-            <p>Line {idx + 1}</p>
+          > 
+          <div class="font-extralight">Name:</div>  <!-- rice -->
+            <input 
+              bind:value={line.name}
+              type="string"
+              class="pl-1.5 rounded-md bg-neutral-100 border-[0.5px] focus:outline-none w-28 dark:bg-neutral-950 dark:border-neutral-700"
+            />
+            
             <div
               class="size-2.5 rounded-full shadow-md"
               style={`background: ${line.color}`}
@@ -97,11 +214,13 @@
               <button
                 title="Add Control Point"
                 on:click={() => {
+                  const lastControlPoint = line.controlPoints.length > 0 ? line.controlPoints[line.controlPoints.length - 1] : { x: 72, y: 72 };
+
                   line.controlPoints = [
                     ...line.controlPoints,
                     {
-                      x: _.random(0, 144),
-                      y: _.random(0, 144),
+                      x: (lastControlPoint.x + line.endPoint.x) / 2,
+                      y: (lastControlPoint.y + line.endPoint.y) / 2
                     },
                   ];
                 }}
@@ -273,6 +392,7 @@
             },
             controlPoints: [],
             color: getRandomColor(),
+            name: "Line " + (lines.length + 1),
           },
         ];
       }}
@@ -294,10 +414,30 @@
       </svg>
       <p>Add Line</p>
     </button>
+    
+
+    <div class="font-extralight font-semibold flex flex-col w-full gap-0.5 text-sm">Code:</div> <!-- rice -->
+    {#each lines as line}
+      <div>{getCode(line)}</div>
+    {/each}
+    
+    <div class="font-extralight font-semibold flex flex-col w-full gap-0.5 text-sm">Code Import:</div>  <!-- rice -->
+      <input 
+        bind:value={importCode}
+        
+        on:input={parseImportCode}
+        type="string"
+        class="font-extralight font-semibold flex flex-col w-full gap-0.5 text-sm focus:outline-none dark:bg-neutral-950 dark:border-neutral-700"
+      />  
+        
+    
   </div>
+  
+  
   <div
     class="w-full bg-neutral-50 dark:bg-neutral-900 rounded-lg p-3 flex flex-row justify-start items-center gap-3 shadow-lg"
   >
+  
     <button
       title="Play/Pause"
       on:click={() => {
